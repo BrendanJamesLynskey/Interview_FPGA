@@ -1,0 +1,89 @@
+# FPGA Tool Artifacts
+*.log
+*.rpt
+*.jou
+*.runs/
+*.srcs/
+*.sim/
+*.tmp/
+
+# Vivado specific
+.Xil/
+*.xpr
+*.pb
+*.wdb
+*.jou
+vivado*
+vivado.log
+vivado*.log
+
+# Quartus specific
+*.qpf
+*.qsf
+*.qws
+*.rpt
+*.htm
+*.sopcinfo
+db/
+incremental_db/
+simulation/
+
+# ISE specific
+*.ise
+*.ngc
+*.xst
+_xmsgs/
+iseconfig/
+xst/
+
+# ModelSim/QuestaSim
+work/
+transcript
+*.wlf
+*.vcd
+*.vstf
+
+# VCS
+csrc/
+simv
+simv.daidir
+vc_hdrs.h
+
+# Generated files
+*.bit
+*.bin
+*.mcs
+*.bak
+*~
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
+*.exe
+
+# Build artifacts
+obj/
+bin/
+dist/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
