@@ -91,20 +91,18 @@ module sync_2ff #(
     input  logic data_src,              // input from source domain (async)
     output logic data_sync              // synchronised output
 );
-    logic [SYNC_STAGES-1:0] sync_chain;
-
-    // The two registers must be placed in adjacent FFs to minimise routing delay
+    // The registers must be placed in adjacent FFs to minimise routing delay
     // between stages. Xilinx: use ASYNC_REG attribute to ensure this.
-    (* ASYNC_REG = "TRUE" *) logic [SYNC_STAGES-1:0] sync_chain_attr;
+    (* ASYNC_REG = "TRUE" *) logic [SYNC_STAGES-1:0] sync_chain;
 
     always_ff @(posedge clk_dst or negedge rst_n_dst) begin
         if (!rst_n_dst)
-            sync_chain_attr <= '0;
+            sync_chain <= '0;
         else
-            sync_chain_attr <= {sync_chain_attr[SYNC_STAGES-2:0], data_src};
+            sync_chain <= {sync_chain[SYNC_STAGES-2:0], data_src};
     end
 
-    assign data_sync = sync_chain_attr[SYNC_STAGES-1];
+    assign data_sync = sync_chain[SYNC_STAGES-1];
 
 endmodule
 ```

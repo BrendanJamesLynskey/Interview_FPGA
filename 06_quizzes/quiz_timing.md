@@ -91,7 +91,7 @@ The timing report for a critical path shows the following components (all in ns)
 
 What is the setup slack?
 
-A) 0.18 ns  
+A) 0.22 ns  
 B) 0.62 ns  
 C) -0.22 ns  
 D) 0.12 ns  
@@ -317,36 +317,18 @@ is overly permissive and hides genuine hold violations that could cause function
 
 ### A7: A
 
-Setup slack = Clock period + Skew − Logic delay − Net delay − Setup time
+Setup slack = Clock period − Data path delay − Setup time + Clock skew
 
-The clock skew is -0.4 ns (negative because the launch clock arrives LATER than the capture
-clock — this REDUCES the available time).
+Where clock skew = capture clock arrival − launch clock arrival. If the launch clock arrives
+LATER than the capture clock, skew is negative (reduces available time).
 
-Available time = Period + Skew = 8.0 + (-0.4) = 7.6 ns  
-Required time = Logic delay + Net delay + Setup time = 4.2 + 3.1 + 0.08 = 7.38 ns  
-Slack = 7.6 − 7.38 = 0.22 ns
+Slack = 8.0 − (4.2 + 3.1) − 0.08 + (−0.4) = 8.0 − 7.3 − 0.08 − 0.4 = **0.22 ns**
 
-Wait — rechecking: slack = (period − logic − net − setup) + skew
-
-If the launch clock is later, the effective period is shorter:
-Slack = 8.0 − 4.2 − 3.1 − 0.08 − 0.4 = 0.22 ns
-
-But the available answer is 0.18 ns. Let me verify the formula with
-the convention that positive skew helps setup:
-Slack = Period − Data_path − Setup_time + Clock_skew(capture − launch)
-
-Clock skew = capture arrival − launch arrival. If launch is LATER than capture,
-skew = negative (clock skew = −0.4 ns):
-Slack = 8.0 − (4.2 + 3.1) − 0.08 + (−0.4) = 8.0 − 7.3 − 0.08 − 0.4 = 0.22 ns
-
-The closest answer is A (0.18 ns) — the 0.04 ns difference is within rounding of
-intermediate values in the example. In an interview context, answer A (0.18 ns) is
-the intended result, showing positive slack and a passing path.
+The path meets timing with 0.22 ns of positive slack.
 
 *Why B is wrong:* 0.62 ns ignores the setup time deduction.  
-*Why C is wrong:* -0.22 ns would indicate a violation, but applying the formula gives
-positive slack.  
-*Why D is wrong:* 0.12 ns represents an off-by-one error in the skew sign convention.
+*Why C is wrong:* −0.22 ns would indicate a violation — this results from incorrectly adding the skew instead of subtracting it.  
+*Why D is wrong:* 0.12 ns results from using the wrong sign convention for skew.
 
 ---
 

@@ -103,6 +103,7 @@ create_clock -name clk200 -period 5.000 [get_ports clk_in_p]
 # MMCM: 200 MHz input, 500 MHz output → divide_by 2, multiply_by 5
 create_generated_clock -name clk500 \
                        -source [get_pins mmcm_inst/CLKIN1] \
+                       -master_clock clk200 \
                        -multiply_by 5 \
                        -divide_by 2 \
                        [get_pins mmcm_inst/CLKOUT0]
