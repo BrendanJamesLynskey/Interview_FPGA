@@ -177,8 +177,8 @@ module cdc_handshake_dst #(
     input  logic                  req_sync_i,
 
     // Data bus (driven by source domain; stable when req_sync_i is high)
-    // Note: data is captured COMBINATIONALLY when req_sync_i first goes high.
-    // For maximum safety, capture on the SECOND cycle after req_sync_i is stable.
+    // Note: data is NOT captured on the cycle req_sync_i first goes high; the
+    // FSM moves to DST_LATCH and captures on the following dst cycle.
     input  logic [DATA_WIDTH-1:0] data_i,
 
     // Handshake ACK output (crosses to source domain)
@@ -411,13 +411,15 @@ module tb_cdc_handshake;
     int                     fail_count = 0;
 
     // Enqueue expected values when sent
-    always_ff @(posedge clk_src) begin
+    // (plain always, not always_ff: the stimulus and assertions also write
+    //  expected_q / fail_count, which always_ff would forbid)
+    always @(posedge clk_src) begin
         if (src_send)
             expected_q.push_back(src_data);
     end
 
     // Check received values against expected
-    always_ff @(posedge clk_dst) begin
+    always @(posedge clk_dst) begin
         if (dst_valid) begin
             logic [DATA_WIDTH-1:0] expected_val;
             if (expected_q.size() == 0) begin
@@ -494,9 +496,37 @@ module tb_cdc_handshake;
         // Allow outstanding dst_valid to be captured
         repeat (20) @(posedge clk_dst);
 
+        // Test 4: reset both domains while REQ is high but before dst has
+        // latched (REQ needs 2 dst cycles to synchronise + 1 to latch), then
+        // check the link is idle and a fresh transfer still gets through.
+        $display("[%0t] TB: Test 4 -- reset during transfer", $time);
+        @(posedge clk_src);
+        src_data <= 32'hBAD0_0BAD;
+        src_send <= 1'b1;
+        @(posedge clk_src);
+        src_send <= 1'b0;
+        @(posedge clk_src);
+        if (!(src_busy === 1'b1 && dut.req_raw === 1'b1 && dut.u_dst.state == dut.u_dst.DST_IDLE)) begin
+            $error("[%0t] TB: Test 4 setup -- handshake not in flight", $time);
+            fail_count++;
+        end
+        rst_n_src = 1'b0;
+        rst_n_dst = 1'b0;
+        expected_q.delete();                 // in-flight word is abandoned
+        repeat (4) @(posedge clk_dst);
+        if (src_busy !== 1'b0 || dut.req_raw !== 1'b0 || dut.ack_raw !== 1'b0) begin
+            $error("[%0t] TB: Test 4 -- busy/REQ/ACK not cleared by reset", $time);
+            fail_count++;
+        end
+        @(negedge clk_src) rst_n_src = 1'b1;
+        @(negedge clk_dst) rst_n_dst = 1'b1;
+        send_and_wait(32'h600D_F00D);   // any stray dst_valid of 0xBAD00BAD
+        repeat (20) @(posedge clk_dst);     // would hit the empty-queue check
+        $display("[%0t] TB: Test 4 complete", $time);
+
         // Final summary
         $display("=== Results: %0d PASSED, %0d FAILED ===", pass_count, fail_count);
-        if (fail_count == 0 && pass_count == (1 + 3 + NUM_XFERS))
+        if (fail_count == 0 && pass_count == (1 + 3 + NUM_XFERS + 1))
             $display("TB: ALL TESTS PASSED");
         else
             $error("TB: TESTS FAILED");
@@ -523,7 +553,7 @@ module tb_cdc_handshake;
         src_send |-> ##1 !src_send;
     endproperty
     assert property (send_is_pulse)
-        else $error("[%0t] TB ASSERTION: src_send held high for more than one cycle", $time);
+        else begin $error("[%0t] TB ASSERTION: src_send held high for more than one cycle", $time); fail_count++; end
 
     // dst_valid must be a single-cycle pulse
     property valid_is_pulse;
@@ -531,7 +561,7 @@ module tb_cdc_handshake;
         dst_valid |-> ##1 !dst_valid;
     endproperty
     assert property (valid_is_pulse)
-        else $error("[%0t] TB ASSERTION: dst_valid held high for more than one cycle", $time);
+        else begin $error("[%0t] TB ASSERTION: dst_valid held high for more than one cycle", $time); fail_count++; end
 
     // REQ must not be asserted while busy is low (invariant: busy -> req eventually)
     property busy_when_req;
@@ -539,7 +569,7 @@ module tb_cdc_handshake;
         dut.u_src.req_o |-> src_busy;
     endproperty
     assert property (busy_when_req)
-        else $error("[%0t] TB ASSERTION: req_o asserted but src_busy is low", $time);
+        else begin $error("[%0t] TB ASSERTION: req_o asserted but src_busy is low", $time); fail_count++; end
 
 endmodule : tb_cdc_handshake
 
@@ -557,7 +587,10 @@ endmodule : tb_cdc_handshake
 //   [  750ns] TB: Test 3 -- 1000 random transfers
 //   ...
 //   [XXXXXX ns] TB: Test 3 complete
-//   === Results: 1004 PASSED, 0 FAILED ===
+//   [XXXXXX ns] TB: Test 4 -- reset during transfer
+//   [XXXXXX ns] TB: Received 0x600DF00D -- PASS
+//   [XXXXXX ns] TB: Test 4 complete
+//   === Results: 1005 PASSED, 0 FAILED ===
 //   TB: ALL TESTS PASSED
 //
 // Key things to verify in waveforms:
