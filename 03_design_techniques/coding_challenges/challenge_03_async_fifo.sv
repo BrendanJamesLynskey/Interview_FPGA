@@ -69,6 +69,11 @@
 //   - wr_full_o asserts when the FIFO contains FIFO_DEPTH entries.
 //   - rd_empty_o asserts when the FIFO contains 0 entries.
 //   - Writing when full or reading when empty is silently ignored (no error).
+//   - Read data is first-word-fall-through: rd_data_o shows the head entry
+//     whenever rd_empty_o is low, and rd_en_i pops it on the next clk_rd edge.
+//   - Pointers and flags follow Cummings (SNUG 2002): the next binary pointer
+//     is computed once and the binary pointer, Gray pointer and flag are all
+//     registered from it on the same edge, so the flags never lag the pointers.
 //   - No data is corrupted or lost for any valid wr_en / rd_en combination.
 //
 // =============================================================================
@@ -142,55 +147,30 @@ module async_fifo_wr #(
     // - The lower ADDR_WIDTH bits are the RAM address.
     logic [ADDR_WIDTH:0] wr_ptr_bin;   // binary write pointer
     logic [ADDR_WIDTH:0] wr_ptr_gray;  // Gray-coded write pointer
+    logic [ADDR_WIDTH:0] wr_bin_next;
+    logic [ADDR_WIDTH:0] wr_gray_next;
 
-    // -------------------------------------------------------------------------
-    // Binary write pointer increment
-    // -------------------------------------------------------------------------
-    always_ff @(posedge clk_wr or negedge rst_n_wr) begin
-        if (!rst_n_wr)
-            wr_ptr_bin <= '0;
-        else if (wr_en_i && !wr_full_o)
-            wr_ptr_bin <= wr_ptr_bin + 1'b1;
-    end
+    // Next-state pointers: advance only on an accepted write
+    assign wr_bin_next  = wr_ptr_bin + ADDR_WIDTH'(wr_en_i && !wr_full_o);
+    assign wr_gray_next = wr_bin_next ^ (wr_bin_next >> 1);
 
-    // -------------------------------------------------------------------------
-    // Gray code conversion (registered)
-    // -------------------------------------------------------------------------
+    // FULL: the next write pointer has wrapped exactly once past the
+    // synchronised read pointer -- in Gray code, the top two bits differ and
+    // the rest are equal. Computed from the *next* pointer so the flag is
+    // valid on the same edge the pointer moves.
     always_ff @(posedge clk_wr or negedge rst_n_wr) begin
-        if (!rst_n_wr)
+        if (!rst_n_wr) begin
+            wr_ptr_bin  <= '0;
             wr_ptr_gray <= '0;
-        else
-            wr_ptr_gray <= wr_ptr_bin ^ (wr_ptr_bin >> 1);
-    end
-
-    // -------------------------------------------------------------------------
-    // Full condition:
-    // The FIFO is full when the write pointer has wrapped around ONCE relative
-    // to the read pointer. In Gray code:
-    //   - The two MSBs of wr_ptr_gray differ from rd_ptr_gray_sync.
-    //   - All remaining bits of wr_ptr_gray equal rd_ptr_gray_sync.
-    //
-    // This comparison is done in the write clock domain using the SYNCHRONISED
-    // read pointer, which may be slightly stale (conservative -- can declare
-    // full when there is actually one free slot, but never declares not-full
-    // when actually full).
-    // -------------------------------------------------------------------------
-    always_ff @(posedge clk_wr or negedge rst_n_wr) begin
-        if (!rst_n_wr)
-            wr_full_o <= 1'b0;
-        else begin
-            // Full when top two bits of wr and rd Gray pointers differ,
-            // and all lower bits match.
-            // Gray code full condition (Cummings 2002):
-            //   full = (wptr_gray[N:N-1] != rptr_gray_sync[N:N-1]) &&
-            //          (wptr_gray[N-2:0]  == rptr_gray_sync[N-2:0])
-            wr_full_o <= (wr_ptr_gray[ADDR_WIDTH]     != rd_ptr_gray_sync_i[ADDR_WIDTH])   &&
-                         (wr_ptr_gray[ADDR_WIDTH-1]   != rd_ptr_gray_sync_i[ADDR_WIDTH-1]) &&
-                         (wr_ptr_gray[ADDR_WIDTH-2:0] == rd_ptr_gray_sync_i[ADDR_WIDTH-2:0]);
+            wr_full_o   <= 1'b0;
+        end else begin
+            wr_ptr_bin  <= wr_bin_next;
+            wr_ptr_gray <= wr_gray_next;
+            wr_full_o   <= (wr_gray_next == {~rd_ptr_gray_sync_i[ADDR_WIDTH:ADDR_WIDTH-1],
+                                              rd_ptr_gray_sync_i[ADDR_WIDTH-2:0]});
         end
     end
 
-    // RAM address is the lower ADDR_WIDTH bits of the binary pointer
     assign wr_addr_o     = wr_ptr_bin[ADDR_WIDTH-1:0];
     assign wr_ptr_gray_o = wr_ptr_gray;
 
@@ -218,41 +198,26 @@ module async_fifo_rd #(
 );
     logic [ADDR_WIDTH:0] rd_ptr_bin;
     logic [ADDR_WIDTH:0] rd_ptr_gray;
+    logic [ADDR_WIDTH:0] rd_bin_next;
+    logic [ADDR_WIDTH:0] rd_gray_next;
 
-    // -------------------------------------------------------------------------
-    // Binary read pointer increment
-    // -------------------------------------------------------------------------
-    always_ff @(posedge clk_rd or negedge rst_n_rd) begin
-        if (!rst_n_rd)
-            rd_ptr_bin <= '0;
-        else if (rd_en_i && !rd_empty_o)
-            rd_ptr_bin <= rd_ptr_bin + 1'b1;
-    end
+    // Next-state pointers: advance only on an accepted read
+    assign rd_bin_next  = rd_ptr_bin + ADDR_WIDTH'(rd_en_i && !rd_empty_o);
+    assign rd_gray_next = rd_bin_next ^ (rd_bin_next >> 1);
 
-    // -------------------------------------------------------------------------
-    // Gray code conversion (registered)
-    // -------------------------------------------------------------------------
+    // EMPTY: the next read pointer has caught up with the synchronised write
+    // pointer. Computed from the *next* pointer so that reading the last entry
+    // raises empty on the same edge -- a back-to-back read cannot underflow.
     always_ff @(posedge clk_rd or negedge rst_n_rd) begin
-        if (!rst_n_rd)
+        if (!rst_n_rd) begin
+            rd_ptr_bin  <= '0;
             rd_ptr_gray <= '0;
-        else
-            rd_ptr_gray <= rd_ptr_bin ^ (rd_ptr_bin >> 1);
-    end
-
-    // -------------------------------------------------------------------------
-    // Empty condition:
-    // The FIFO is empty when the synchronised write pointer equals the read
-    // pointer. Because both are in Gray code and the comparison is done in the
-    // read domain, the synchronised write pointer is conservative: it may lag
-    // slightly, causing the FIFO to appear empty when one word has been written
-    // but not yet synchronised. This is safe -- better to stall the reader for
-    // one extra cycle than to read garbage data.
-    // -------------------------------------------------------------------------
-    always_ff @(posedge clk_rd or negedge rst_n_rd) begin
-        if (!rst_n_rd)
-            rd_empty_o <= 1'b1;    // start empty
-        else
-            rd_empty_o <= (rd_ptr_gray == wr_ptr_gray_sync_i);
+            rd_empty_o  <= 1'b1;    // start empty
+        end else begin
+            rd_ptr_bin  <= rd_bin_next;
+            rd_ptr_gray <= rd_gray_next;
+            rd_empty_o  <= (rd_gray_next == wr_ptr_gray_sync_i);
+        end
     end
 
     assign rd_addr_o     = rd_ptr_bin[ADDR_WIDTH-1:0];
@@ -484,9 +449,16 @@ module tb_async_fifo;
                 $error("[%0t] Scoreboard: read when model empty -- FAIL", $time);
                 fail_count++;
             end else begin
+                // First-word-fall-through: rd_data already holds the entry
+                // being popped on this edge
                 automatic logic [DATA_WIDTH-1:0] expected = model_q.pop_front();
-                // Note: rd_data lags rd_en by one cycle (registered read)
-                // We check on the NEXT cycle after rd_en
+                if (rd_data !== expected) begin
+                    $error("[%0t] Scoreboard: read %0h, expected %0h -- FAIL",
+                           $time, rd_data, expected);
+                    fail_count++;
+                end else begin
+                    pass_count++;
+                end
             end
         end
     end
@@ -505,14 +477,16 @@ module tb_async_fifo;
         wr_en   <= 1'b0;
     endtask
 
-    // Read one word from the FIFO (waits if empty), returns data
+    // Read one word from the FIFO (waits if empty), returns data.
+    // The read is first-word-fall-through: rd_data shows the head entry while
+    // rd_empty is low, so capture it before popping with rd_en.
     task automatic fifo_read(output logic [DATA_WIDTH-1:0] data);
         @(posedge clk_rd);
         while (rd_empty) @(posedge clk_rd);
+        data  = rd_data;
         rd_en <= 1'b1;
         @(posedge clk_rd);
-        rd_en  <= 1'b0;
-        data = rd_data;    // data available one cycle after rd_en
+        rd_en <= 1'b0;
     endtask
 
     // -------------------------------------------------------------------------
@@ -618,7 +592,8 @@ module tb_async_fifo;
                 $error("TB: Test 4 FAILED -- extra data found after overflow write");
         end
 
-        $display("TB: Tests 1-4 complete");
+        $display("TB: Tests 1-4 complete -- scoreboard: %0d reads checked, %0d failures",
+                 pass_count + fail_count, fail_count);
         $finish;
     end
 
