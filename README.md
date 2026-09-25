@@ -129,6 +129,7 @@ Contributions are welcome. To contribute:
 - [Interview_Verilog](https://github.com/BrendanJamesLynskey/Interview_Verilog) — Verilog design interview preparation
 - [Interview_SystemVerilog](https://github.com/BrendanJamesLynskey/Interview_SystemVerilog) — SystemVerilog verification interview preparation
 - [Interview_Digital_Hardware_Design](https://github.com/BrendanJamesLynskey/Interview_Digital_Hardware_Design) — General digital design principles
+- [SystemVerilog_Simulators](https://github.com/BrendanJamesLynskey/SystemVerilog_Simulators) — Which free simulators (Icarus, Verilator, Vivado xsim, Questa Starter) can run the coding challenges here, and what each one rejects
 
 ## License
 
