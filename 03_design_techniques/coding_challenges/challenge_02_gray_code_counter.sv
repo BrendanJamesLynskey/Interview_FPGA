@@ -108,15 +108,16 @@ endmodule : gray_to_bin
 // -----------------------------------------------------------------------------
 // Gray code counter
 //
-// Architecture:
-//   An internal binary counter increments every clock cycle (or when inc_i is
-//   high). The Gray code output is derived combinationally from the binary
-//   counter value. Both gray_o and bin_o are outputs so the caller can use
-//   whichever is needed.
+// Architecture (Cummings-style):
+//   The next binary value bin_next = bin + inc_i is computed combinationally,
+//   and BOTH the binary and the Gray registers load from it on the same edge.
+//   The Gray output therefore comes straight from a flip-flop (glitch-free,
+//   safe to synchronise across a clock domain) and changes on the same cycle
+//   as the binary count -- one cycle after inc_i, with no extra latency.
 //
-//   The binary counter value is also exposed as bin_o so the caller can
-//   perform pointer arithmetic (e.g., FIFO occupancy calculation) without
-//   needing to convert back from Gray code.
+//   The binary value is exposed as bin_o so the caller can perform pointer
+//   arithmetic (e.g., FIFO occupancy calculation) without needing to convert
+//   back from Gray code.
 // -----------------------------------------------------------------------------
 module gray_counter #(
     parameter int WIDTH = 4
@@ -127,40 +128,27 @@ module gray_counter #(
     output logic [WIDTH-1:0] gray_o,     // Gray code value (for CDC)
     output logic [WIDTH-1:0] bin_o       // binary value (for arithmetic)
 );
-    logic [WIDTH-1:0] bin_count;    // internal binary counter
-
     // -------------------------------------------------------------------------
-    // Binary counter (increments on posedge clk when inc_i is high)
+    // Next-state logic: increment, then convert to Gray
     // -------------------------------------------------------------------------
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            bin_count <= '0;
-        else if (inc_i)
-            bin_count <= bin_count + 1'b1;
-    end
-
-    // -------------------------------------------------------------------------
-    // Binary-to-Gray conversion (combinational, registered through Gray output FF)
-    // The Gray output is registered to ensure it is glitch-free.
-    // -------------------------------------------------------------------------
+    logic [WIDTH-1:0] bin_next;
     logic [WIDTH-1:0] gray_next;
 
-    assign gray_next = bin_count ^ (bin_count >> 1);
+    assign bin_next  = bin_o + WIDTH'(inc_i);
+    assign gray_next = bin_next ^ (bin_next >> 1);
 
-    // Register the Gray output to ensure clean transitions for CDC
+    // -------------------------------------------------------------------------
+    // Both registers update together, so gray_o always equals
+    // bin_to_gray(bin_o) and never lags the binary count
+    // -------------------------------------------------------------------------
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
+        if (!rst_n) begin
+            bin_o  <= '0;
             gray_o <= '0;
-        else
+        end else begin
+            bin_o  <= bin_next;
             gray_o <= gray_next;
-    end
-
-    // Binary output: registered for consistency
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            bin_o <= '0;
-        else
-            bin_o <= bin_count;
+        end
     end
 
 endmodule : gray_counter
@@ -229,15 +217,20 @@ module tb_gray_counter;
     int               seq_pass   = 0;
     int               seq_fail   = 0;
 
+    // Tests 1, 3 and 4 all drive the DUT, so they must run one after another
+    bit seq_done   = 1'b0;
+    bit reset_done = 1'b0;
+    bit hold_done  = 1'b0;
+
     initial begin
         // Initial state
         inc       = 1'b0;
         prev_gray = '0;
 
-        // Release reset
-        repeat (3) @(posedge clk);
+        // Release reset (drive stimulus on negedge to avoid races with the DUT)
+        repeat (3) @(negedge clk);
         rst_n = 1'b1;
-        @(posedge clk);
+        @(negedge clk);
 
         // Enable counting
         inc = 1'b1;
@@ -269,6 +262,7 @@ module tb_gray_counter;
         end
 
         $display("TB: Sequence test: %0d PASSED, %0d FAILED", seq_pass, seq_fail);
+        seq_done = 1'b1;
     end
 
     // -------------------------------------------------------------------------
@@ -308,9 +302,8 @@ module tb_gray_counter;
     // Test 3: Reset test
     // -------------------------------------------------------------------------
     initial begin
-        // Wait until counter has counted 8 cycles, then assert reset
-        @(posedge rst_n);
-        repeat (10) @(posedge clk);
+        // Wait until the sequence test has finished, then assert reset
+        wait (seq_done);
 
         // Async reset
         @(negedge clk);
@@ -324,25 +317,28 @@ module tb_gray_counter;
             $display("TB: Reset test PASSED -- outputs = 0 after async reset");
         end
 
-        // Release reset
-        #3;
+        // Release reset away from the active clock edge
+        @(negedge clk);
         rst_n = 1'b1;
+        reset_done = 1'b1;
     end
 
     // -------------------------------------------------------------------------
     // Test 4: Enable test (counter must hold when inc_i = 0)
     // -------------------------------------------------------------------------
     initial begin
-        @(posedge rst_n);
-        repeat (20) @(posedge clk);  // let Tests 1/2/3 run first
+        wait (reset_done);
+        repeat (4) @(negedge clk);   // count a few cycles after reset
 
         // Disable increment for 5 cycles
         inc = 1'b0;
-        @(posedge clk);
+        @(negedge clk);
         begin : check_hold
-            logic [WIDTH-1:0] snap_gray = gray;
-            logic [WIDTH-1:0] snap_bin  = bin_val;
-            repeat (5) @(posedge clk);
+            logic [WIDTH-1:0] snap_gray;
+            logic [WIDTH-1:0] snap_bin;
+            snap_gray = gray;
+            snap_bin  = bin_val;
+            repeat (5) @(negedge clk);
             if (gray === snap_gray && bin_val === snap_bin) begin
                 $display("TB: Enable test PASSED -- counter held for 5 cycles");
             end else begin
@@ -350,6 +346,8 @@ module tb_gray_counter;
             end
         end
         inc = 1'b1;  // re-enable
+        repeat (2) @(negedge clk);
+        hold_done = 1'b1;
     end
 
     // -------------------------------------------------------------------------
@@ -359,7 +357,7 @@ module tb_gray_counter;
     // Gray code property: exactly one bit changes per clock when counting
     property one_bit_change;
         @(posedge clk) disable iff (!rst_n)
-        inc_i |=> ($countones($past(gray) ^ gray) == 1);
+        inc |=> ($countones($past(gray) ^ gray) == 1);
     endproperty
     assert property (one_bit_change)
         else $error("[%0t] ASSERTION FAIL: gray code changed by != 1 bit: %0b -> %0b",
@@ -378,7 +376,7 @@ module tb_gray_counter;
     // Finish
     // -------------------------------------------------------------------------
     initial begin
-        #5000;   // allow all tests to complete
+        wait (hold_done);   // all tests complete
         $display("=== TB Complete ===");
         $finish;
     end
