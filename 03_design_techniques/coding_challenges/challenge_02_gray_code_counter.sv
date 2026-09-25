@@ -360,8 +360,10 @@ module tb_gray_counter;
         inc |=> ($countones($past(gray) ^ gray) == 1);
     endproperty
     assert property (one_bit_change)
-        else $error("[%0t] ASSERTION FAIL: gray code changed by != 1 bit: %0b -> %0b",
-                    $time, $past(gray), gray);
+        // No $past() in the action block: it has no inferred clock (xsim rejects
+        // it), and Verilator 5.020 rejects the explicit-clock form
+        else $error("[%0t] ASSERTION FAIL: gray code changed by != 1 bit (gray = %0b)",
+                    $time, $sampled(gray));
 
     // Gray code output must match bin_to_gray conversion of binary output
     property gray_matches_binary;
