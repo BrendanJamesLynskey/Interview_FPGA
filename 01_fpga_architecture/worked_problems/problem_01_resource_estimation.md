@@ -45,9 +45,9 @@ A direct 64-tap FIR at 18-bit coefficients with 16-bit input would require 64 DS
 
 Check: input sample rate 250 MHz / 8 = 31.25 MHz output from the previous stage. Each input sample produces 8 output samples. With 8 subfilters of 8 taps, time-multiplexing over 8 phases uses 8 physical multipliers.
 
-**Symmetric coefficients:** A 64-tap linear-phase FIR has 32 unique tap values. With 8 taps per subfilter, symmetry gives 4 unique values per subfilter. The pre-adder in DSP48E2 halves the multiply count. Per subfilter: 4 DSPs.
+**Symmetric coefficients:** A 64-tap linear-phase FIR has 32 unique tap values, but in an interpolate-by-8 polyphase split the symmetry does not fall within a subfilter: h[n] = h[63 − n] maps subfilter p onto subfilter 7 − p (reversed), and no subfilter is its own mirror. Those two subfilters produce different output samples, so the DSP48E2 pre-adder cannot fold them into one multiply. Per subfilter: 8 DSPs.
 
-**Total FIR DSPs per channel:** 4 DSP48E2 (exploiting symmetry + time-multiplexing).
+**Total FIR DSPs per channel:** 8 DSP48E2 (time-multiplexing; symmetry does not reduce the count here).
 
 **Complex frequency shift multiplier (per channel):**
 
@@ -69,13 +69,13 @@ A 10-stage CORDIC pipeline uses only additions and shifts — no multiplications
 
 | Block | DSPs per channel | 4 channels |
 |---|---|---|
-| Polyphase FIR | 4 | 16 |
+| Polyphase FIR | 8 | 32 |
 | Complex multiplier | 3 | 12 |
 | CORDIC | 0 | 0 |
-| Overhead/margin (10%) | ~1 | ~3 |
-| **Total** | **~8** | **~31** |
+| Overhead/margin (10%) | ~1 | ~4 |
+| **Total** | **~12** | **~48** |
 
-**KU040 DSP limit: 1,920.** Estimated usage: **31 DSP48E2 (1.6%).**
+**KU040 DSP limit: 1,920.** Estimated usage: **48 DSP48E2 (2.5%).**
 
 DSP resources are not a constraint. The KU040 is massively over-specified for DSP alone.
 
@@ -88,7 +88,7 @@ DSP resources are not a constraint. The KU040 is massively over-specified for DS
 64 coefficients × 18 bits = 1,152 bits per channel.
 For 4 channels with independent coefficients: 4 × 1,152 = 4,608 bits.
 
-Minimum BRAM: a single 18Kb BRAM (16,384 bits) can hold all four channels' coefficients with 64-address × 72-bit width leaving only 4,608 / 16,384 = 28% utilisation. Use one 18Kb half-BRAM.
+Minimum BRAM: a single 18Kb BRAM (16,384 data bits) can hold all four channels' coefficients as 256 addresses × 18 bits (RAMB18 is at most 36 bits wide), leaving only 4,608 / 16,384 = 28% utilisation. Use one 18Kb half-BRAM.
 
 Alternatively, if coefficients are fixed at synthesis time, they fold into LUT INIT strings: **0 BRAMs** for fixed coefficients.
 
@@ -124,7 +124,7 @@ BRAMs are not a constraint.
 
 **Polyphase FIR (per channel) — LUT/FF for pipeline logic:**
 
-The 4 DSP48E2s handle the multiplication. Supporting logic includes:
+The 8 DSP48E2s handle the multiplication. Supporting logic includes:
 - Address counter for polyphase phase selection: 3-bit counter = ~6 LUTs, 3 FFs
 - Coefficient address decoder: ~8 LUTs
 - Input sample mux (8:1 for time-multiplexed subfilters): 8 × 16-bit = ~24 LUTs (F7/F8 muxes)
@@ -140,7 +140,7 @@ A 10-stage CORDIC for 16-bit I/Q uses CORDIC rotation equations:
 $$X_{i+1} = X_i - d_i \cdot 2^{-i} \cdot Y_i$$
 $$Y_{i+1} = Y_i + d_i \cdot 2^{-i} \cdot X_i$$
 
-Each stage involves two 16-bit additions/subtractions with a shift — implemented in carry chains. Each 16-bit adder uses one CARRY8 (one Slice column height of 2 Slices = 16 LUTs). Two adders per stage × 10 stages × 16-bit = approximately:
+Each stage involves two 16-bit additions/subtractions with a shift — implemented in carry chains. Each 16-bit adder uses two CARRY8s (2 Slices = 16 LUTs). Two adders per stage × 10 stages × 16-bit = approximately:
 
 - Adder logic: 10 stages × 2 × 2 Slices × 8 LUTs = 320 LUTs (carry chain, CARRY8 occupies LUT cells)
 - Stage registers: 10 stages × 2 × 16 bits = 320 FFs
@@ -191,18 +191,18 @@ LUTs and FFs are trivially within budget.
 | LUT6 | 242,400 | ~4,324 | **1.8%** |
 | Flip-flops | 484,800 | ~3,422 | **0.7%** |
 | BRAM 36Kb | 600 | ~1 | **<1%** |
-| DSP48E2 | 1,920 | ~31 | **1.6%** |
+| DSP48E2 | 1,920 | ~48 | **2.5%** |
 | MMCM | 10 | 1 | **10%** |
 
-**The design fits comfortably on a KU040.** In fact, the design uses less than 2% of any resource. The KU040 is massively over-specified for this workload.
+**The design fits comfortably on a KU040.** In fact, the design uses less than 3% of any logic, memory or DSP resource. The KU040 is massively over-specified for this workload.
 
-**Recommendation:** Revisit the device selection. A smaller device in the UltraScale family (e.g., KU025 with 145,680 LUTs, 1,920 DSPs) or even a 7-series device (e.g., Kintex-7 XC7K70T) would accommodate this design at significantly lower cost.
+**Recommendation:** Revisit the device selection. A smaller device in the UltraScale family (e.g., KU025 with 145,440 LUTs, 1,152 DSPs) or even a 7-series device (e.g., Kintex-7 XC7K70T) would accommodate this design at significantly lower cost.
 
 ---
 
 ### Step 5 — Most Likely Bottleneck and Timing Risk
 
-At 1.8% LUT utilisation and 1.6% DSP utilisation, resource availability is not the constraint. The realistic bottleneck is **timing closure at 250 MHz** in two specific areas:
+At 1.8% LUT utilisation and 2.5% DSP utilisation, resource availability is not the constraint. The realistic bottleneck is **timing closure at 250 MHz** in two specific areas:
 
 **1. CORDIC critical path:**
 

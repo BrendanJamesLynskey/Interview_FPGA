@@ -201,7 +201,7 @@ endmodule
 
 **Current situation:**
 
-3,840 LUTs implementing 32-bit multiplications. A 32×32 multiplier uses approximately 32 LUTs in a LUT-based implementation (rough estimate), so 3,840 LUTs represents approximately 120 multiplications implemented in LUTs.
+3,840 LUTs implementing 32-bit multiplications. A 32×32 multiplier in LUTs needs roughly one LUT per partial-product bit — on the order of 32 × 32 ≈ 1,000 LUTs — so 3,840 LUTs represents approximately 4 multiplications implemented in LUTs.
 
 **Why they are not using DSPs:**
 
@@ -209,11 +209,11 @@ Common causes:
 1. The `use_dsp` attribute was explicitly set to `"no"` in RTL or XDC
 2. The multiplier result feeds directly into logic that prevents DSP cascade inference
 3. The tool ran out of DSP48E1 blocks — but we have 612 free (740 - 128), so this is not the cause
-4. The operand widths exceed DSP input sizes (DSP48E1 has 30×18 inputs for signed multiplication)
+4. The operand widths exceed DSP input sizes (the DSP48E1 multiplier is 25×18 signed; the A port is 30 bits but only 25 bits feed the multiplier)
 
 **32-bit × 32-bit and DSP width limits:**
 
-A DSP48E1 multiplier is 30-bit × 18-bit (signed). A 32×32 multiplication exceeds this in both operands. The tool may have fallen back to LUTs.
+A DSP48E1 multiplier is 25-bit × 18-bit (signed). A 32×32 multiplication exceeds this in both operands. The tool may have fallen back to LUTs.
 
 **Solution using DSP cascade:**
 
@@ -255,7 +255,7 @@ module mult32x32 (
 
     // Accumulate
     always_ff @(posedge clk)
-        p <= pp_hh << 34 | (pp_lh + pp_hl) << 17 | pp_ll;
+        p <= (pp_hh <<< 34) + ((pp_lh + pp_hl) <<< 17) + pp_ll;
 
     // Force DSP for each multiplication
     (* use_dsp = "yes" *) logic signed [34:0] _pp_ll_dsp;
@@ -266,10 +266,10 @@ endmodule
 **Expected savings:**
 
 ```
-120 LUT-based 32×32 multipliers removed: -3,840 LUTs
-120 × 4 DSPs added: +480 DSP48E1
+~4 LUT-based 32×32 multipliers removed: -3,840 LUTs
+4 × 4 DSPs added: +16 DSP48E1
 
-DSPs used after: 128 + 480 = 608 / 740 = 82.2% (within target)
+DSPs used after: 128 + 16 = 144 / 740 = 19.5% (within target)
 LUT savings: 3,840 LUTs
 ```
 
@@ -442,8 +442,7 @@ synth_design -top top_level \
              -directive AreaOptimized_high \
              -fsm_extraction auto \
              -resource_sharing on \
-             -keep_equivalent_registers \
-             -no_lc
+             -keep_equivalent_registers
 ```
 
 **Setting explanations:**
@@ -451,7 +450,7 @@ synth_design -top top_level \
 - `-directive AreaOptimized_high` — Aggressive logic sharing and constant propagation. May increase logic depth (hurts timing) but reduces LUT count.
 - `-resource_sharing on` — Enables the tool to share arithmetic operators across time-multiplexed operations. Complements manual sharing.
 - `-keep_equivalent_registers` — Prevents the tool from removing logically identical registers. Relevant only if duplicate registers were intentionally created for timing; disable if your intent is area reduction.
-- `-no_lc` — Disables LUT combining within a LUTRAM structure. Can reduce LUTRAM utilisation but slightly increases pure LUT usage.
+- `-no_lc` — Disables LUT combining (packing two small functions into one LUT6 as dual LUT5s). This usually increases LUT count, so it is left off when the goal is area reduction.
 
 **Post-synthesis check:**
 

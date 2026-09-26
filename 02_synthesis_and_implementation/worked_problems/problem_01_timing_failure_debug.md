@@ -135,6 +135,13 @@ create_generated_clock -name clk_400_buf \
 
 After re-implementing with the corrected constraint, the timing summary will correctly show the violations as real failures against the `clk_400` constraint.
 
+> **Correction note:** In current Vivado this exact scenario does not arise from the
+> omission alone: the tool automatically derives generated clocks on MMCM/PLL outputs from
+> the `create_clock` on the input (UG903, "Automatically Derived Clocks"), so `clk_400` would
+> be constrained without the extra line. Paths with no clock at all are reported as
+> unconstrained by `check_timing` and are not timed, so they do not produce a negative WNS.
+> The diagnostic workflow (`report_clocks`, `check_timing -verbose`) is still the right one.
+
 ---
 
 ## Part 2: Diagnosing the Failing Path
@@ -181,7 +188,7 @@ T_logic_max ≈ T_period - T_clk2q - T_setup - T_routing_budget
 - The coefficient mux selects one of N coefficients based on `sel`
 - The selected coefficient is then applied to the tap data
 
-A 9-level LUT path for a mux select suggests the MUX is implemented as a priority encoder tree, which is inefficient. A 4:1 MUX requires 2 LUT levels. An 8:1 MUX requires 3 LUT levels with LUT6s.
+A 9-level LUT path for a mux select suggests the MUX is implemented as a priority encoder tree, which is inefficient. A 4:1 MUX fits in a single LUT6; an 8:1 MUX uses two LUT6s and a MUXF7 (one LUT level), and a 16:1 MUX four LUT6s with MUXF7/MUXF8.
 
 **Step-by-step fix:**
 
@@ -204,7 +211,7 @@ module coeff_mux_bad #(parameter NTAPS = 64)(
     input  logic [15:0] coeff [0:NTAPS-1],
     output logic [15:0] selected_coeff
 );
-    // 64:1 MUX in a single level → synthesises to 9 LUT levels
+    // 64:1 MUX in a single cycle → ~2 LUT levels plus MUXF7/F8 on its own
     always_ff @(posedge clk)
         selected_coeff <= coeff[sel];
 endmodule
@@ -228,6 +235,8 @@ module coeff_mux_good #(parameter NTAPS = 64)(
 endmodule
 ```
 
+Note: the failing path already starts at a register (`sel_reg`), so registering the select a second time does not shorten it. To split the path, the pipeline register must sit inside the mux — for example register the outputs of 8:1 sub-muxes, then do the final 8:1 selection in the next cycle.
+
 **Step 3: Consider BRAM inference for the coefficient table**
 
 If NTAPS is large, the coefficient array should be stored in a BRAM, not in distributed LUT RAM. BRAM access is 1 clock cycle (with output register) and does not consume LUT logic:
@@ -247,7 +256,10 @@ always_ff @(posedge clk)
 
 ```tcl
 synth_design -top fir_filter_bank -directive PerformanceOptimized -retiming
-impl_design
+opt_design
+place_design
+phys_opt_design
+route_design
 report_timing_summary
 ```
 

@@ -211,13 +211,13 @@ create_generated_clock -name rgmii_txclk_fwd \
                        -divide_by 1 \
                        [get_ports rgmii_txc]
 
-# Assume PHY requires: T_setup = 1.5 ns, T_hold = 0.5 ns before/after its clock
+# PHY requires: T_setup = 1.0 ns (from the spec); assume T_hold = 0.5 ns
 # T_trace_data = 0.3 ns, T_trace_clock = 0.2 ns
-# output_delay_max = T_setup + T_trace_data - T_trace_clk = 1.5 + 0.3 - 0.2 = 1.6 ns
+# output_delay_max = T_setup + T_trace_data - T_trace_clk = 1.0 + 0.3 - 0.2 = 1.1 ns
 # output_delay_min = -T_hold + T_trace_data - T_trace_clk = -0.5 + 0.3 - 0.2 = -0.4 ns
 
 set_output_delay -clock rgmii_txclk_fwd \
-                 -max 1.6 \
+                 -max 1.1 \
                  [get_ports {rgmii_txd[*] rgmii_txctl}]
 
 set_output_delay -clock rgmii_txclk_fwd \
@@ -226,7 +226,7 @@ set_output_delay -clock rgmii_txclk_fwd \
 
 # DDR falling edge
 set_output_delay -clock rgmii_txclk_fwd \
-                 -clock_fall -max 1.6 -add_delay \
+                 -clock_fall -max 1.1 -add_delay \
                  [get_ports {rgmii_txd[*] rgmii_txctl}]
 
 set_output_delay -clock rgmii_txclk_fwd \
@@ -306,17 +306,18 @@ set_multicycle_path -hold 3 \
 
 **For the reverse path (500 MHz status registers read by 125 MHz):**
 
-Status registers from the core are written at 500 MHz and read by the AXI master at 125 MHz. The 125 MHz domain has a full 8 ns read window; a path that meets timing at 500 MHz (2 ns) certainly meets timing at 125 MHz. However, the hold check default may be too tight for the 4:1 ratio. Use a safe exception:
+Status registers from the core are written at 500 MHz and read by the AXI master at 125 MHz. By default the tool checks setup against the tightest edge pair — launch at the 500 MHz edge at 6 ns, capture at the 125 MHz edge at 8 ns — so the default requirement is only 2 ns. If the status data is held stable for a full 125 MHz cycle, relax it with a multicycle path counted in source-clock cycles (`-start`):
 
 ```tcl
 # 500 MHz → 125 MHz: data from fast domain, captured by slow domain
-# Default setup check gives 8 ns (one 125 MHz cycle) — this is satisfied.
-# The multicycle path constraint relaxes to the actual crossing structure.
-set_multicycle_path -setup 1 \
+# Default setup requirement is one 500 MHz period (2 ns); allow 4 (8 ns).
+set_multicycle_path -setup 4 -start \
                     -from [get_clocks clk_500_buf] \
                     -to   [get_clocks clk_125_buf]
-# No hold adjustment needed: the default hold check is at the launch edge,
-# which is conservative for a slow-capture scenario.
+# Companion hold: move the hold check back by N-1 = 3 source cycles.
+set_multicycle_path -hold 3 -start \
+                    -from [get_clocks clk_500_buf] \
+                    -to   [get_clocks clk_125_buf]
 ```
 
 **Verification:**
@@ -413,7 +414,7 @@ The complete constraint file for this design requires:
 | `set_input_delay` (RGMII RX, DDR) | 4 (max/min × rising/falling) |
 | `set_output_delay` (RGMII TX, DDR) | 4 (max/min × rising/falling) |
 | `set_false_path` (async) | 3 (rst_n, uart_rx, uart_tx) |
-| `set_multicycle_path` | 3 (125→500 setup+hold, 500→125 setup) |
+| `set_multicycle_path` | 4 (125→500 setup+hold, 500→125 setup+hold) |
 | `set_clock_groups` or separate MCPs | TBD after confirming MMCM phase relationship |
 
 **Interview tip:** A complete constraint file is not about memorising syntax — it is about methodically accounting for every timing relationship in the design. The most reliable mental checklist is: primary clocks → generated clocks → I/O constraints → exceptions (false paths, multicycle paths) → clock groups → verification.

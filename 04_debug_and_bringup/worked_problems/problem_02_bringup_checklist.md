@@ -166,8 +166,8 @@ Below is a comprehensive bring-up checklist with acceptance criteria, ordered by
 - [ ] **VIO connected in Vivado Hardware Manager** — VIO probes readable; VIO output
   toggles GPIO1 and GPIO2 on PMOD header. Scope confirms both pins toggle correctly.
 
-- [ ] **Internal oscillator frequency measured** — route internal STARTUPE2 clock to a
-  countable output. Confirm approximately 65 MHz ±10% (device-dependent).
+- [ ] **Internal oscillator frequency measured** — route the internal STARTUPE3 CFGMCLK to a
+  countable output. Confirm approximately 50 MHz nominal (UG570 uses a 15% tolerance).
 
 - [ ] **Current with MVB loaded:** expected 5–7A at 12V. Record: ________A
 

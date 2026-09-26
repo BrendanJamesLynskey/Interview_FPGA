@@ -4,8 +4,8 @@
 
 You are reviewing the architecture of an FPGA-based packet processing engine targeting a Xilinx UltraScale+ XCKU5P device. The device has the following memory resources:
 
-- **BRAM 36Kb:** 312 total (624 as 18Kb halves)
-- **LUT6 (SLICEM, distributed RAM capable):** approximately 30% of 217,800 = ~65,000 SLICEM LUTs
+- **BRAM 36Kb:** 480 total (960 as 18Kb halves)
+- **LUT6 (SLICEM, distributed RAM capable):** approximately 30% of 216,960 = ~65,000 SLICEM LUTs
 
 The design has five memory requirements:
 
@@ -63,18 +63,18 @@ For 128-bit width: a single 36Kb BRAM supports a maximum of 64 bits wide (512 ×
 - Read latency: 1 cycle (with output register disabled) or 2 cycles (output register enabled)
 
 **Distributed RAM option:**
-64 × 128 bits = 8,192 bits. Using RAM64M8 (64 × 8b, 1 LUT cell each): $\frac{128}{8} = 16$ RAM64M8 cells per 64-deep bank. Each RAM64M8 supports dual-port (read + write simultaneously). Total: **16 SLICEM LUTs**.
+64 × 128 bits = 8,192 bits. A LUT6 holds 64 bits, so even a single-port array needs 8,192 / 64 = 128 LUTs. For simultaneous read + write, RAM64M8 (8 LUTs, 64 × 7 bits simple dual-port) needs $\lceil 128/7 \rceil = 19$ cells. Total: **~152 SLICEM LUTs**.
 
 **Recommendation: Distributed RAM.**
 
 Rationale:
-1. 8 Kb is small — two 36Kb BRAMs waste 82% of capacity.
+1. 8 Kb is small — two 36Kb BRAMs waste ~89% of capacity.
 2. The access pattern (read + write each cycle to the same or different addresses) maps well to the RAM64M8 dual-port mode.
-3. 16 SLICEM LUTs is negligible on a device with 65,000 available SLICEM LUTs.
+3. ~152 SLICEM LUTs is negligible on a device with 65,000 available SLICEM LUTs.
 4. Distributed RAM allows asynchronous read if needed, providing flexibility.
 5. Saving 2 BRAMs preserves them for Memory B and E which need them more.
 
-**Resource cost:** 16 SLICEM LUT6 cells.
+**Resource cost:** ~152 SLICEM LUT6 cells.
 
 ---
 
@@ -175,15 +175,15 @@ end process;
 
 This works for single-port access (one counter updated per cycle) without a hazard because the read is combinational and the write happens at the clock edge.
 
-32 × 32 bits = 1,024 bits. Using RAM32M (32 × 8b, 2 LUTs per 8-bit cell): $\frac{32}{8} = 4$ RAM32M cells. Total: **8 SLICEM LUTs**.
+32 × 32 bits = 1,024 bits. Using RAM32M (4 LUTs, 32 × 8 bits single-port): $\frac{32}{8} = 4$ RAM32M cells. Total: **16 SLICEM LUTs** (1,024 bits / 64 bits per LUT6).
 
 **Registers option:** 32 × 32-bit registers = 1,024 flip-flops. One register per counter, read combinationally, incremented and registered every cycle. No packing efficiency but maximum flexibility (any counter accessible any cycle, true multi-port). Cost: 1,024 FFs + ~32 LUTs for increment logic.
 
 **Recommendation: Distributed RAM (RAM32M).**
 
-Rationale: 8 SLICEM LUTs for the array is significantly more area-efficient than 1,024 FFs for 32 counters. The async read property enables single-cycle read-modify-write without pipeline hazards. BRAM is incompatible with the single-cycle RMW requirement.
+Rationale: 16 SLICEM LUTs for the array is significantly more area-efficient than 1,024 FFs for 32 counters. The async read property enables single-cycle read-modify-write without pipeline hazards. BRAM is incompatible with the single-cycle RMW requirement.
 
-**Resource cost:** 8 SLICEM LUT6 cells + 32-bit increment adder in logic (1 CARRY8 = ~8 LUTs).
+**Resource cost:** 16 SLICEM LUT6 cells + 32-bit increment adder in logic (1 CARRY8 = ~8 LUTs).
 
 ---
 
@@ -208,14 +208,14 @@ Using TDP mode: Port A (write) and Port B (read) can operate simultaneously and 
 
 **URAM option:**
 
-1,024 × 256 bits. Each URAM: 4,096 × 72 bits. For 256-bit width: $\frac{256}{72} = 3.6$ → 4 URAMs in parallel. Depth 1,024 < 4,096 — fits in depth. Total: **4 URAMs** (4× less than BRAMs, but wastes some width since 4×72 = 288 > 256).
+1,024 × 256 bits. Each URAM: 4,096 × 72 bits. For 256-bit width: $\frac{256}{72} = 3.6$ → 4 URAMs in parallel. Depth 1,024 < 4,096 — fits in depth. Total: **4 URAMs** (half as many as BRAMs, but wastes some width since 4×72 = 288 > 256).
 
 URAMs support simultaneous port A and port B access (different addresses) — perfect for the burst write / burst read pattern.
 
 **Recommendation: URAM (4 URAMs).**
 
 4 URAMs vs 8 BRAMs. The URAM solution:
-- Saves 8 BRAMs (large saving on the 312-BRAM KU5P)
+- Saves 8 BRAMs (on the 480-BRAM KU5P)
 - Supports simultaneous write/read via dual-port URAM
 - Has 2-cycle read latency — acceptable for a packet reorder buffer (latency is dominated by packet store-and-forward anyway)
 
@@ -227,18 +227,18 @@ URAMs support simultaneous port A and port B access (different addresses) — pe
 
 | Memory | Depth × Width | Total bits | Recommendation | BRAMs | URAMs | LUTs (SLICEM) |
 |---|---|---|---|---|---|---|
-| A: Header cache | 64 × 128 | 8 Kb | Distributed RAM (RAM64M8) | 0 | 0 | 16 |
+| A: Header cache | 64 × 128 | 8 Kb | Distributed RAM (RAM64M8) | 0 | 0 | ~152 |
 | B: Flow table | 8,192 × 64 | 512 Kb | URAM (cascade) | 0 | 2 | 0 |
 | C: Checksum LUT | 256 × 8 | 2 Kb | LUT ROM (async read mandatory) | 0 | 0 | 16–32 |
-| D: Statistics | 32 × 32 | 1 Kb | Distributed RAM (async RMW) | 0 | 0 | 8 |
+| D: Statistics | 32 × 32 | 1 Kb | Distributed RAM (async RMW) | 0 | 0 | 16 |
 | E: Reorder buffer | 1,024 × 256 | 256 Kb | URAM (dual-port burst) | 0 | 4 | 0 |
-| **Totals** | | **~779 Kb** | | **0** | **6** | **~56** |
+| **Totals** | | **~779 Kb** | | **0** | **6** | **~184–200** |
 
-**BRAM usage: 0 out of 312 (0%).**
+**BRAM usage: 0 out of 480 (0%).**
 
-This is the key insight: by choosing distributed RAM for small/async memories and URAM for large dense memories, all 312 BRAMs on the KU5P remain available for other design requirements (e.g., FIFOs, protocol buffers, IP cores).
+This is the key insight: by choosing distributed RAM for small/async memories and URAM for large dense memories, all 480 BRAMs on the KU5P remain available for other design requirements (e.g., FIFOs, protocol buffers, IP cores).
 
-**URAM usage: 6 out of the available URAMs on the KU5P** (varies by device grade — typically 48–120 URAMs on KU5P variants).
+**URAM usage: 6 out of the available URAMs on the KU5P** (the KU5P has 64 URAMs).
 
 ---
 
@@ -264,4 +264,4 @@ This is the key insight: by choosing distributed RAM for small/async memories an
 
 **Forgetting URAMs exist:** Many candidates focus on BRAM vs. distributed RAM and omit URAMs entirely. On UltraScale+, URAMs are often the best choice for large dense memories. Mentioning URAMs and their constraints (2-cycle read, fixed 4K × 72, UltraScale+ only) distinguishes a strong candidate.
 
-**Not quantifying the BRAM budget:** Saying "use BRAM for Memory B" without noting it consumes 16 of the 312 available BRAMs (5%) is incomplete. Resource budget awareness is what separates architects from implementers.
+**Not quantifying the BRAM budget:** Saying "use BRAM for Memory B" without noting it consumes 16 of the 480 available BRAMs (3.3%) is incomplete. Resource budget awareness is what separates architects from implementers.

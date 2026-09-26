@@ -122,7 +122,7 @@ A clock signal enters an FPGA on a dedicated `MRCC` (Multi-Region Clock Capable)
 Compared to an `SRCC` (Single-Region Clock Capable) pin, what additional routing capability
 does an `MRCC` pin provide?
 
-A) An MRCC pin can drive global clock networks across multiple clock regions; an SRCC pin can only drive its local clock region.  
+A) An MRCC pin can drive regional clock buffers in its own and adjacent clock regions; an SRCC pin can only drive regional buffers in its own clock region.  
 B) An MRCC pin supports differential input standards; an SRCC pin supports only single-ended.  
 C) An MRCC pin bypasses the MMCM/PLL and connects directly to the global clock backbone.  
 D) An MRCC pin has lower input jitter than an SRCC pin due to a dedicated low-noise power supply.  
@@ -225,16 +225,14 @@ LUTs with accumulated routing delays.
 
 ---
 
-### A3: C
+### A3: B
 
-One BRAM36 stores 36 Kb (36,864 bits) of data, which includes 32 Kb of data bits plus 4 Kb of
-parity bits. The question specifies ignoring parity bits — but "36Kb" is the total including
-parity. The answer is 36 Kb as the branded capacity. The usable data-only capacity is 32 Kb.
-Since the question asks for the capacity "as a 36Kb memory," the answer is 36 Kb.
+One BRAM36 stores 36 Kb (36,864 bits), which is 32 Kb of data bits plus 4 Kb of parity bits.
+The question asks for the capacity ignoring parity bits, so the answer is the data-only 32 Kb.
 
 *Why A is wrong:* 16 Kb is the capacity of a BRAM16 found in older Spartan-3 devices.  
-*Why B is wrong:* 32 Kb is the data-only portion excluding parity — the full BRAM36 capacity
-is labelled 36 Kb.  
+*Why C is wrong:* 36 Kb is the branded capacity including the 4 Kb of parity bits, which the
+question excludes.  
 *Why D is wrong:* 72 Kb would require two BRAM36 blocks.
 
 ---
@@ -296,7 +294,7 @@ BRAM18 in ROM mode (initialise with `INIT_xx` attributes, write-enable tied low)
 LUTs and zero flip-flops — a single dedicated hard block.
 
 *Why A is wrong:* distributed RAM using LUT RAM is area-efficient only for small memories
-(typically 64 entries or fewer). 512 entries would consume ~128 LUT6s just for storage, wasting
+(typically 64 entries or fewer). 512 entries would consume ~64 LUT6s (4,096 bits / 64 bits per LUT) plus MUXF7/F8 muxing just for storage, wasting
 significant fabric.  
 *Why C is wrong:* 512 flip-flops for storage is extremely wasteful — flip-flops have no
 address decode logic and are the most expensive resource for memory.  
@@ -341,12 +339,11 @@ CARRY8 (8-bit per slice) in both types.
 
 ### A10: A
 
-In Xilinx 7-series and UltraScale devices, I/O pins designated as MRCC can drive the global
-clock backbone across multiple clock regions (an entire side of the device or even the full
-device). SRCC pins can only drive clock networks within their single local clock region. For a
-board-level clock that needs to reach all logic in the FPGA, the clock input pin must be a
-MRCC-capable pin; otherwise, Vivado will issue a DRC error or route it through fabric with
-additional jitter.
+In Xilinx 7-series devices, MRCC pins can drive the regional clock buffers (BUFIO/BUFR, via
+BUFMR) in their own and adjacent clock regions, whereas SRCC pins can drive regional buffers
+only in their own clock region. Both MRCC and SRCC pins can drive global clock buffers (BUFG),
+so either can bring a board-level clock onto the global network (UG472). UltraScale devices
+replace MRCC/SRCC with global clock (GC) pins.
 
 *Why B is wrong:* both MRCC and SRCC pins support differential standards. The MRCC/SRCC
 designation is about clock routing reach, not electrical standard.  
@@ -383,9 +380,9 @@ the 32-bit data portion: 1024 × 32 = 32 Kb per BRAM36. To store 4096 × 32 bits
 you need 128 / 32 = 4 BRAM36 primitives. Each BRAM36 stores 1024 of the 4096 rows — the 4K
 address space is split across 4 BRAMs with address decoding on bits [11:10].
 
-*Why A is wrong:* 4K x 9 configuration gives 4096 × 9 bits = 36 Kb per BRAM36. You would need
-the data width to be 32, not 9. Four BRAM36s in 4K x 9 mode gives only 4096 × 36 bits = 18 Kb
-of 32-bit-wide data — this does not cleanly implement a 32-bit-wide memory.  
+*Note on A:* 4K x 9 gives 4096 × 9 bits = 36 Kb per BRAM36. Four BRAM36s side by side in
+4K x 9 mode, using 8 of the 9 bits in each, also implement 4096 × 32 exactly with the same 4
+primitives and no address decoding — so A is also a valid mapping.  
 *Why C is wrong:* 2K x 18 configuration gives 2048 entries × 18 bits; two of these in parallel
 give 2048 × 36 bits = one 36-bit-wide, 2048-deep memory. Four of these would give 2048 × 72
 bits — not a clean mapping to a 4096 x 32 requirement.  

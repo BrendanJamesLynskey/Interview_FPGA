@@ -169,7 +169,7 @@ D) It is equivalent to `set_false_path` — it removes the path from timing anal
 
 A design uses both a 100 MHz and a 125 MHz clock generated from the same MMCM. The GCD of
 100 and 125 is 25 MHz, giving a common period of 40 ns. The tool's timing analysis shows a
-setup requirement of 8 ns for paths crossing from 100 MHz to 125 MHz. You want to allow one
+setup requirement of 2 ns for paths crossing from 100 MHz to 125 MHz. You want to allow one
 full 100 MHz cycle (10 ns) for the data to travel. What multicycle constraint is needed?
 
 A) `set_multicycle_path -setup 2 -from [get_clocks clk_100] -to [get_clocks clk_125]`  
@@ -326,8 +326,8 @@ Slack = 8.0 − (4.2 + 3.1) − 0.08 + (−0.4) = 8.0 − 7.3 − 0.08 − 0.4 =
 
 The path meets timing with 0.22 ns of positive slack.
 
-*Why B is wrong:* 0.62 ns ignores the setup time deduction.  
-*Why C is wrong:* −0.22 ns would indicate a violation — this results from incorrectly adding the skew instead of subtracting it.  
+*Why B is wrong:* 0.62 ns ignores the clock skew (8.0 − 7.3 − 0.08).  
+*Why C is wrong:* −0.22 ns would indicate a violation — it has the right magnitude but the wrong sign.  
 *Why D is wrong:* 0.12 ns results from using the wrong sign convention for skew.
 
 ---
@@ -437,13 +437,13 @@ They are not equivalent.
 When two clocks are generated from the same MMCM, the tool treats them as synchronous with
 a known phase relationship. For a 100 MHz → 125 MHz crossing, the default setup check uses
 the closest edge pair, which gives an effective check window shorter than one 100 MHz period
-(8 ns in this case, as stated in the question). To tell the tool that data requires a full
+(2 ns: launch at 30 ns, capture at 32 ns). To tell the tool that data requires a full
 10 ns (one 100 MHz cycle), you apply `set_multicycle_path -setup 2`, which moves the capture
-edge forward, effectively giving the data path two "steps" in the common 40 ns period to
-arrive — aligning the constraint with the actual one-cycle latency budget.
+edge forward by one 125 MHz period (8 ns), so the tightest requirement becomes 2 + 8 = 10 ns —
+exactly one 100 MHz cycle.
 
 *Why B is wrong:* the tool does NOT automatically use the source clock period. It analyses
-the shortest edge-to-edge relationship, which for these two frequencies is 8 ns, not 10 ns.  
+the shortest edge-to-edge relationship, which for these two frequencies is 2 ns, not 10 ns.  
 *Why C is wrong:* `-setup 1` is the default — applying it explicitly does nothing.  
 *Why D is wrong:* `set_false_path` would remove the timing check entirely. Since these clocks
 ARE synchronous (same MMCM source), paths crossing between them must be checked. Using

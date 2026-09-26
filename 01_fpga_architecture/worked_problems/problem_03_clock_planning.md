@@ -28,6 +28,13 @@ You are the lead FPGA designer for a network processing card. The FPGA is a Xili
 - DDR4 and PCIe IP blocks have fixed placement requirements (IP auto-placement)
 - The GTH quads for 25GbE are in clock regions R4C2 and R5C2
 
+> **Correction note (architecture):** The 12-clocks-per-region limit and the BUFR/BUFIO
+> buffers used below are 7-series clocking. In UltraScale/UltraScale+ each clock region
+> has 24 routing and 24 distribution tracks, and BUFR/BUFMR/BUFIO have been removed
+> (replaced by BUFGCE_DIV, BUFG_GT and the new I/O clocking) — AMD UG572. Also, UltraScale+
+> GTH transceivers top out at 16.375 Gb/s (DS922), so 25GbE needs GTY. The budget
+> analysis in Steps 1, 2 and 5 should be read as a 7-series exercise.
+
 **Questions:**
 
 1. Identify the clock region budget problem and quantify it.
@@ -123,9 +130,9 @@ Now CLK4 and CLK5 are local to 2 of the 13 regions. In the other 11 regions, the
 | CLK10 ref_100 | — | — | — | yes |
 | CLK11 debug_clk | yes | yes | yes | yes |
 | CLK13 aux_io_clk (BUFR) | yes | — | — | — |
-| **Count** | **5–6** | **8** | **5–6** | **7** |
+| **Count** | **5** | **7** | **4** | **6** |
 
-Maximum per-region count: **8 (in the GTH regions)**. Well within the limit of 12.
+Maximum per-region count: **7 (in the GTH regions)**. Well within the limit of 12.
 
 ---
 
@@ -144,7 +151,7 @@ Maximum per-region count: **8 (in the GTH regions)**. Well within the limit of 1
 
 **Find VCO frequency:**
 
-The VCO must be between 600 MHz and 1600 MHz (UltraScale+ MMCM).
+The VCO must be between 800 MHz and 1600 MHz (UltraScale+ MMCM, DS922).
 
 All outputs must divide evenly from the VCO:
 - 250 MHz: VCO / O = 250 → VCO = 250k for integer k
@@ -187,11 +194,11 @@ MMCME4_ADV generic map (
   CLKOUT2_DUTY_CYCLE => 0.5,
   CLKOUT3_DUTY_CYCLE => 0.5,
   BANDWIDTH        => "OPTIMIZED",
-  REF_JITTER1      => 0.010         -- Reference oscillator jitter (100 fs RMS → 0.010 ns)
+  REF_JITTER1      => 0.010         -- Reference jitter in UI: 0.010 × 5 ns = 50 ps
 )
 ```
 
-**Verify VCO in range:** $600 \le 1000 \le 1600$ MHz. Valid.
+**Verify VCO in range:** $800 \le 1000 \le 1600$ MHz. Valid.
 
 **BUFG connections:**
 
@@ -231,6 +238,8 @@ This prevents Vivado from attempting timing analysis across these domains (which
 **Step 4b — Choose the correct CDC structure:**
 
 The 25GbE MAC produces 64-bit data words at 312.5 MHz (one word per cycle). The packet processing core runs at 250 MHz. The ratio is 312.5 / 250 = 1.25 — neither an integer ratio nor a simple fraction. A standard async FIFO is required.
+
+Rate check: 64 bits × 312.5 MHz = 20 Gb/s in, but a 64-bit read side at 250 MHz drains only 16 Gb/s, so at sustained full rate the FIFO fills regardless of depth — the read side needs a wider bus (e.g. 128 bits) or backpressure. (A true 25GbE MAC with a 64-bit bus runs at 390.625 MHz, not 312.5 MHz.)
 
 **Async FIFO design:**
 

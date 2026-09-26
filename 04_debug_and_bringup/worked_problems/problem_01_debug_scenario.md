@@ -247,9 +247,11 @@ are permitted.
 
 The bug: the DMA wraps `AWID` from 0xF back to 0x0 before all responses for `AWID=0x0` are
 received. The interconnect sees a new `AWID=0x0` write while a previous `AWID=0x0` write is
-still outstanding. This violates the AXI4 rule that **the same ID value must not be reused
-until the previous transaction with that ID is complete**. Some interconnect implementations
-handle this gracefully; others deadlock.
+still outstanding. AXI4 itself permits this — multiple outstanding writes may share an ID
+provided their responses return in order (AMBA AXI specification, ARM IHI 0022) — so the DMA
+is not breaking the protocol; the hang comes from an interconnect or slave in this system
+that does not handle same-ID outstanding writes correctly. Some implementations handle this
+gracefully; others deadlock.
 
 ---
 
